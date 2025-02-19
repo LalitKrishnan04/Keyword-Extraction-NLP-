@@ -1,0 +1,83 @@
+pip install transformers scikit-learn nltk
+import pandas as pd
+import nltk
+from sklearn.model_selection import train_test_split
+import torch
+from transformers import BertTokenizer, BertModel
+from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.corpus import wordnet as wn
+
+# Download required NLTK data
+nltk.download('wordnet')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Load the dataset
+df = pd.read_csv('manufacturing_text_corpus.csv')
+
+def get_wordnet_pos(word):
+"""Get the WordNet POS tag for a word."""
+tag = nltk.pos_tag([word])[0][1][0].upper()
+tag_dict = {"J": wn.ADJ, "N": wn.NOUN, "V": wn.VERB, "R": wn.ADV}
+return tag_dict.get(tag, wn.NOUN)
+
+# Preprocessing function
+def preprocess_text(text):
+text = text.lower()
+text = nltk.word_tokenize(text)
+text = [word for word in text if word.isalnum()]
+text = [word for word in text if word not in nltk.corpus.stopwords.words('english')]
+text = [nltk.WordNetLemmatizer().lemmatize(word, pos=get_wordnet_pos(word)) for word
+in text]
+return ' '.join(text)
+
+18
+
+# Apply preprocessing
+df['Processed_Content'] = df['Content'].apply(preprocess_text)
+
+# Split into training and testing sets
+train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+
+# Save the preprocessed dataset
+train_df.to_csv('train_manufacturing_text_corpus.csv', index=False)
+test_df.to_csv('test_manufacturing_text_corpus.csv', index=False)
+
+# Initialize BERT tokenizer and model
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+model = BertModel.from_pretrained('bert-base-uncased')
+
+def get_keywords(text, top_n=5):
+# Tokenize text
+inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True,
+max_length=512)
+outputs = model(**inputs)
+
+# Get token embeddings
+token_embeddings = outputs.last_hidden_state.squeeze(0)
+
+# Convert to TF-IDF matrix
+vectorizer = TfidfVectorizer()
+tfidf_matrix = vectorizer.fit_transform([text])
+feature_names = vectorizer.get_feature_names_out()
+
+# Get top N TF-IDF scores
+tfidf_scores = tfidf_matrix.toarray().flatten()
+tfidf_scores = [(feature_names[i], tfidf_scores[i]) for i in range(len(feature_names))]
+tfidf_scores = sorted(tfidf_scores, key=lambda x: x[1], reverse=True)[:top_n]
+
+19
+
+# Filter keywords using WordNet
+keywords = []
+for word, score in tfidf_scores:
+if wn.synsets(word, pos=get_wordnet_pos(word)):
+keywords.append((word, score))
+
+return keywords
+
+# Example usage with a document from the preprocessed dataset
+example_text = train_df['Processed_Content'].iloc[0]
+keywords = get_keywords(example_text)
+print(keywords)
